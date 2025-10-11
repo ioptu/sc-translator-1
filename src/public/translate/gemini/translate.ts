@@ -21,7 +21,8 @@ export const translate: (params: TranslateParams) => Promise<TranslateResult> = 
 
     if (!currentService) { throw getError('Error: Service value not found.'); }
 
-    const serviceValue = { /* defaultGeminiValue 或其他默认值 */, ...currentService }; 
+    // **【关键修复点】**：移除导致 SyntaxError 的注释和额外的逗号
+    const serviceValue = { ...defaultGeminiValue, ...currentService }; 
     
     // 检查 Auth Token (使用 key)
     if (!serviceValue.key) { throw getError('Error: Auth Token (key) is required.'); }
@@ -59,14 +60,8 @@ export const translate: (params: TranslateParams) => Promise<TranslateResult> = 
             throw getError(`Cloudflare AI API Error: ${errorDetails}`);
         }
 
-        // 🎯 修改点：不再提取 translation 字符串，直接将整个 result 对象作为结果返回
-        // 
-        // 注意：TranslateResult 类型定义中，result 字段通常是一个 string[]，
-        // 如果要返回完整的 JSON 对象，你可能需要更新 TranslateResult 的类型定义，
-        // 或者将 JSON 对象转换为一个包含 JSON 字符串的数组。
-        
-        // 假设 TranslateResult 的 result 字段只能是 string[]，
-        // 我们将其转换为一个包含 JSON 字符串的数组。
+        // 🎯 返回完整的 JSON 响应字符串
+        // 假设 TranslateResult 的 result 字段只能是 string[]
         const jsonResultString = JSON.stringify(result, null, 2); 
 
         return {
@@ -77,8 +72,6 @@ export const translate: (params: TranslateParams) => Promise<TranslateResult> = 
             result: [jsonResultString] 
         };
         
-        // 如果 TranslateResult 允许 result 字段是 any，可以直接返回：
-        // return { text, from, to, result }; 
     }
     catch (err) {
         // ... (错误处理逻辑保持不变)
