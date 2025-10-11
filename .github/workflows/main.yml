@@ -39,4 +39,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: sc-translator-crx-build
-        path: dist/
+        path: build/
