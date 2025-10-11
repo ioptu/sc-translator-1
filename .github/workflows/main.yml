@@ -1,0 +1,42 @@
+name: Manual Build Extension
+
+on:
+  # 移除 push 或 pull_request 触发器
+  # 使用 workflow_dispatch 启用手动触发
+  workflow_dispatch:
+    # 可选：您可以在这里定义手动触发时可以输入的参数
+    # inputs:
+    #   logLevel:
+    #     description: 'Log level'
+    #     required: true
+    #     default: 'warning'
+    #     type: choice
+    #     options:
+    #       - info
+    #       - warning
+    #       - debug
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: yarn install
+
+    - name: Build extension
+      run: yarn build
+
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: sc-translator-crx-build
+        path: dist/
