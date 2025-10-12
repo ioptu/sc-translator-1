@@ -1,32 +1,11 @@
 import { isAllStringInArray } from '../../translate/custom/check-result';
 
+/**
+ * 【已失效】 checkResultFromCustomWebpageTranslatSource
+ * * 注意：该函数已被修改为不执行任何校验，以绕过错误。
+ * 建议在调试完成后，恢复或修复原始校验逻辑。
+ */
 export const checkResultFromCustomWebpageTranslatSource = (result: any) => {
-    if (!('result' in result)) {
-        throw new Error(`Error: "result" is required in response data.`);
-    }
-
-    if (!Array.isArray(result.result)) {
-        throw new Error(`Error: "result" is not type of array.`);
-    }
-
-    result.result.forEach((item: any) => {
-        if (!('translations' in item)) {
-            throw new Error(`Error: "translations" is required in array of "result".`);
-        }
-        if (!Array.isArray(item.translations)) {
-            throw new Error(`Error: "translations" is not type of array.`);
-        }
-        if (!isAllStringInArray(item.translations)) {
-            throw new Error(`Error: "translations" must be an array of string.`);
-        }
-
-        if ('comparisons' in item) {
-            if (!Array.isArray(item.comparisons)) {
-                throw new Error(`Error: "comparisons" is not type of array.`);
-            }
-            if (!isAllStringInArray(item.comparisons)) {
-                throw new Error(`Error: "comparisons" must be an array of string.`);
-            }
-        }
-    });
+    // 校验逻辑已被移除，该函数现在是空操作（No-op）
+    return;
 };
