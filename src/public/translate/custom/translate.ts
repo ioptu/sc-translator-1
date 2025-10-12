@@ -2,22 +2,14 @@ import { SOURCE_ERROR } from '../../../constants/errorCodes';
 import { TranslateResult } from '../../../types';
 import { TranslateParams } from '../translate-types';
 import { fetchData, getError } from '../utils';
-import { langCode } from '../google/lang-code';
+import { langCode } from '../google/lang-code'; // 假设这是一个包含语言代码映射的对象
 import { LANGUAGE_NOT_SOPPORTED, RESULT_ERROR } from '../error-codes';
 import { checkResultFromCustomSource } from './check-result';
 import scOptions from '../../sc-options';
 
 // ----------------------------------------------------------------------
-// 辅助类型定义 (为了代码完整性，但实际可能在其他文件)
+// 辅助类型定义 (为了代码完整性，实际应在其他文件)
 // ----------------------------------------------------------------------
-
-type FetchCustomSourceJSON = {
-    text: string;
-    from: string;
-    to: string;
-    userLang: string;
-    preferred: [string, string];
-};
 
 // 定义新的 API 响应结构 (简化版)
 type CustomApiResponse = {
@@ -55,20 +47,24 @@ export const translate = async ({ text, from, to, preferredLanguage, secondPrefe
         baseUrl = urlString.substring(0, questionMarkIndex);
         const paramsString = urlString.substring(questionMarkIndex + 1);
         
+        // 解析参数字符串 (使用 '&' 分隔，'=' 赋值)
         paramsString.split('&').forEach(pair => {
             const [key, value] = pair.split('=');
             if (key) {
                 let rawKey = decodeURIComponent(key);
                 let rawValue = value || ''; 
+                // 仅对键和值进行 URL 解码，保留值中的任何引号
                 extractedParams[rawKey] = decodeURIComponent(rawValue);
             }
         });
     }
 
+    // 映射自定义参数到目标位置/键名
     const authorizationToken = extractedParams['key'] || ''; 
     const translatorCodeValue = extractedParams['tc'] || '';
     const promptBuilderCodeValue = extractedParams['pbc'] || 0; 
     
+    // 构造 Authorization Header 值 (自动添加 Bearer 前缀)
     const authorizationHeaderValue = authorizationToken.startsWith('Bearer ') 
         ? authorizationToken 
         : `Bearer ${authorizationToken}`;
@@ -86,18 +82,25 @@ export const translate = async ({ text, from, to, preferredLanguage, secondPrefe
     // 3. 构造 Headers
     const headers = {
         'Content-Type': 'application/json',
-        'Authorization': authorizationHeaderValue,
+        'Authorization': authorizationHeaderValue, // 动态设置 Authorization
+        // 添加示例中的其他固定 Header
         "accept": "*/*",
         "accept-language": navigator.language || "zh-CN",
         "x-browser-language": navigator.language || "zh-CN",
+        "priority": "u=1, i",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "none",
+        "x-client-version": "1.6.7",
+        // 注意：'sign' 和 'cookie' 等敏感/复杂字段可能需要更复杂的逻辑，这里不处理
     };
 
     // 4. 构造请求 Body (fetchJSON) 
     let fetchJSON = {
-        targetLanguage: langCode[to], 
+        targetLanguage: langCode[to], // 使用映射后的目标语言代码
         translatorCode: translatorCodeValue,
         promptBuilderCode: promptBuilderCodeValue,
-        texts: [ 
+        texts: [ // 适配 API 要求的文本结构
             { id: '0-0', content: text } 
         ]
     };
@@ -110,28 +113,22 @@ export const translate = async ({ text, from, to, preferredLanguage, secondPrefe
     });
 
     try {
-        // ⭐️ 核心修改 1: 声明 data 的类型以匹配 API 响应 ⭐️
         let responseData: CustomApiResponse = await res.json(); 
         
-        // ⭐️ 核心修改 2: 检查自定义 API 状态码 ⭐️
+        // 检查自定义 API 状态码
         if (responseData.code !== 'S000000' || !responseData.data) {
             // 如果 API 返回的 code 不是成功，或者 data 字段缺失
-            // 尝试使用 API 提供的 message 或 code 抛出错误
             throw getError(responseData.code || RESULT_ERROR, responseData.message || 'API返回非成功状态码');
         }
 
         // 提取实际数据
         let data = responseData.data;
         
-        // 由于结构已确定，我们不再需要通用的 checkResultFromCustomSource，
-        // 但如果它包含更复杂的业务逻辑校验，则保留。
-        // checkResultFromCustomSource(data); 
-
         // 6. 自动切换目标语言 (二次请求逻辑)
-        // 注意：现在 sourceLanguage 和 targetLanguage 在 data 内部
         const sourceLangFromApi = data.sourceLanguage;
         const targetLangFromApi = data.targetLanguage;
         
+        // 检查是否用户未指定语言 且 自动检测结果与目标语言相同
         if (!originFrom && !originTo && sourceLangFromApi === targetLangFromApi && preferredLanguage !== secondPreferredLanguage) {
             to = secondPreferredLanguage;
 
@@ -147,25 +144,33 @@ export const translate = async ({ text, from, to, preferredLanguage, secondPrefe
                 body: JSON.stringify(newFetchJSON)
             });
 
-            // ⭐️ 核心修改 3: 处理二次请求的响应 ⭐️
+            // 处理二次请求的响应
             responseData = await newRes.json();
             
             if (responseData.code !== 'S000000' || !responseData.data) {
                  throw getError(responseData.code || RESULT_ERROR, responseData.message || 'API返回非成功状态码 (二次请求)');
             }
             data = responseData.data;
-            // checkResultFromCustomSource(data);
         }
         
-        // 7. 构造最终结果
-        const translatedText = data.texts[0]?.translation || ''; // 提取翻译结果
+        // 7. 构造最终结果，确保符合 TranslateResult 结构，以通过外部校验
+        const translatedText = data.texts[0]?.translation; // 提取翻译结果
 
+        // 校验：如果必需数据不存在，提前抛出错误，避免返回不完整对象
+        if (!translatedText || !data.sourceLanguage) {
+            throw getError(RESULT_ERROR, 'API返回的翻译结果或源语言为空，无法构造完整的翻译结果');
+        }
+        
         const result: TranslateResult = {
-            text, // 原始文本
-            from: data.sourceLanguage, // 使用 API 报告的源语言
-            to, // 使用最终目标语言
-            result: [translatedText], // 将翻译结果包装成数组
-            // 以下字段缺失，但保留在 TranslateResult 中
+            // 必须有这三个字段
+            result: [translatedText], // 翻译文本必须是字符串数组
+            from: data.sourceLanguage, // 源语言必须是字符串
+            to: to,                      // 目标语言必须是字符串
+            
+            // 原始文本
+            text: text, 
+            
+            // 可选字段 (设置为 undefined 即可通过校验)
             dict: undefined,
             phonetic: undefined,
             related: undefined,
@@ -180,8 +185,85 @@ export const translate = async ({ text, from, to, preferredLanguage, secondPrefe
             throw err; 
         }
         else {
-            // 如果是 JSON 解析或其他未知错误，抛出 RESULT_ERROR
             throw getError(RESULT_ERROR); 
+        }
+    }
+};
+
+// ----------------------------------------------------------------------
+// checkResultFromCustomSource.ts 内容
+// ----------------------------------------------------------------------
+
+// 假设 isAllStringInArray 函数的定义
+export const isAllStringInArray = (array: any[]) => {
+    for (let i = 0; i < array.length; i++) {
+        if (typeof array[i] !== 'string') { return false; }
+    }
+    return true;
+};
+
+// 您的 checkResultFromCustomSource 校验函数（如果它真的被外部调用）
+export const checkResultFromCustomSource = (result: any) => {
+    // required key "result", "from", "to"
+    if (!('from' in result) || !('to' in result) || !('result' in result)) {
+        const errorMessage = `Error: `
+            + `${!('result' in result) ? '"result"' : ''} `
+            + `${!('from' in result) ? '"from"' : ''} `
+            + `${!('to' in result) ? '"to"' : ''} is/are required in response data.`;
+
+        throw new Error(errorMessage);
+    }
+
+    // check "result"
+    if (!Array.isArray(result.result)) {
+        throw new Error('Error: "result" is not array.');
+    }
+    else if (!isAllStringInArray(result.result)) {
+        throw new Error('Error: "result" must be an array of strings.');
+    }
+
+    // check "from"
+    if (typeof result.from !== 'string') {
+        throw new Error('Error: "from" is not string.');
+    }
+
+    // check "to"
+    if (typeof result.to !== 'string') {
+        throw new Error('Error: "to" is not string.');
+    }
+
+    // check "dict"
+    if ('dict' in result) {
+        if (!Array.isArray(result.dict)) {
+            throw new Error('Error: "dict" is not array.');
+        }
+        else if (!isAllStringInArray(result.dict)) {
+            throw new Error('Error: "dict" must be an array of strings.');
+        }
+    }
+
+    // check "related"
+    if ('related' in result) {
+        if (!Array.isArray(result.related)) {
+            throw new Error('Error: "related" is not an array.');
+        }
+        else if (!isAllStringInArray(result.related)) {
+            throw new Error('Error: "related" must be an array of strings.');
+        }
+    }
+
+    // check "phonetic"
+    if ('phonetic' in result && typeof result.phonetic !== 'string') {
+        throw new Error('Error: "phonetic" is not string.');
+    }
+
+    // check "example"
+    if ('example' in result) {
+        if (!Array.isArray(result.example)) {
+            throw new Error('Error: "example" is not an array.');
+        }
+        else if (!isAllStringInArray(result.example)) {
+            throw new Error('Error: "example" must be an array of strings.');
         }
     }
 };
