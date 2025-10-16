@@ -2,6 +2,7 @@
 
 import { WebpageTranslateFn } from '..';
 import { SOURCE_ERROR } from '../../../constants/errorCodes';
+// 假设 types 在 constants 目录下
 import * as types from '../../../constants/chromeSendMessageTypes'; 
 import scOptions from '../../sc-options';
 import { RESULT_ERROR, LANGUAGE_NOT_SOPPORTED } from '../../translate/error-codes';
@@ -42,8 +43,6 @@ type MockResponse = {
     status: number;
     ok: boolean;
 };
-
-// ... (proxyFetchData 和其他辅助函数保持不变) ...
 
 const proxyFetchData = (url: string, options: any): Promise<MockResponse> => {
     return new Promise((resolve, reject) => {
@@ -134,16 +133,29 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     };
 
     // 3. 构造请求 Body
-    // ⭐️ 核心修正：paragraphs 是 string[][] 类型。我们现在使用 flat() 后的数组来构造 API 请求。
     const paragraphsArray = Array.isArray(paragraphs) ? paragraphs : [];
-    const flattenedParagraphs = paragraphsArray.flat(); // 获取扁平化后的原始文本列表
+    const flattenedParagraphs = paragraphsArray.flat(); // 原始扁平化文本列表 (全量)
 
-    const textsForApi = flattenedParagraphs.map((content, index) => {
+    // ⭐️ 核心逻辑：过滤无效内容 ⭐️
+    const textsForApi: ApiRequestJSON['texts'] = [];
+    const validContentIndices: number[] = []; // 记录发送给 API 的内容在 'flattenedParagraphs' 中的原始索引
+
+    flattenedParagraphs.forEach((content, index) => {
         const cleanedContent = (content || '').trim();
-        return {
-            id: `0-${index}`, 
-            content: cleanedContent || '.' // 使用占位符保持长度
-        };
+        
+        // 判定标准：如果内容长度小于 3 且不包含字母或中文，则认为是无效的纯标点/数字，跳过发送给 API。
+        const isPurePunctuationOrShort = cleanedContent.length > 0 && !/[a-zA-Z\u4e00-\u9fa5]/.test(cleanedContent) && cleanedContent.length < 3;
+
+        if (cleanedContent.length === 0 || isPurePunctuationOrShort) {
+            // 跳过发送给 API，在后续步骤中该索引将自动填充空字符串
+        } else {
+            // 有效内容，添加到请求中
+            textsForApi.push({
+                id: `0-${index}`, 
+                content: cleanedContent 
+            });
+            validContentIndices.push(index); // 记录有效内容的原始索引
+        }
     });
 
     const fetchJSON: ApiRequestJSON = { 
@@ -181,53 +193,58 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
              throw getError(RESULT_ERROR, 'API 响应中缺少 texts 字段。');
         }
         
-        // 关键校验：检查 API 返回的扁平化数组长度是否与发送的扁平化数组长度一致
-        if (rawResultArray.length !== flattenedParagraphs.length) {
-            throw getError(RESULT_ERROR, `API 返回的翻译结果数 (${rawResultArray.length}) 与发送的段落数 (${flattenedParagraphs.length}) 不匹配。`);
+        // 校验：API 返回的有效结果数是否与发送的有效内容数匹配
+        if (rawResultArray.length !== textsForApi.length) {
+            throw getError(RESULT_ERROR, `API 返回的有效结果数 (${rawResultArray.length}) 与发送的有效段落数 (${textsForApi.length}) 不匹配。`);
         }
 
         // 7. 构造最终结果数组 (Final Result Array)
         
-        // 1. 提取扁平化的翻译文本 (string[])
-        const flatTranslations = rawResultArray.map(item => (item && item.translation) || '');
+        // 1. 提取 API 返回的扁平化翻译文本 (string[])
+        const flatApiTranslations = rawResultArray.map(item => (item && item.translation) || '');
         
-        // 2. 将扁平化的翻译结果重构为原始的嵌套结构，
-        //    并将其包装成官方要求的 FinalResultItem 对象 { translations: [string] }
+        // 2. 将扁平化的翻译结果重构为原始的完整长度，并填充被跳过的项
+        const fullFlatTranslations: string[] = Array(flattenedParagraphs.length).fill('');
+        let apiIndex = 0;
+
+        for (let i = 0; i < flattenedParagraphs.length; i++) {
+            const originalIndex = i;
+            
+            if (validContentIndices.includes(originalIndex)) {
+                // 有效内容，填充 API 翻译结果
+                fullFlatTranslations[originalIndex] = flatApiTranslations[apiIndex];
+                apiIndex++;
+            } else {
+                // 无效内容（如 ":"），保持为空字符串
+                fullFlatTranslations[originalIndex] = ''; 
+            }
+        }
+
+        // 3. 将完整长度的翻译结果重构为官方要求的嵌套结构
         let flatIndex = 0;
         const finalResult: FinalResultItem[] = paragraphsArray.map((row) => {
             const translationsForRow: string[] = [];
             
-            // row 是原始段落数组中的一行，它本身是一个 string[]
             for (let i = 0; i < row.length; i++) {
-                if (flatIndex < flatTranslations.length) {
-                    // 从扁平化的翻译结果中取出对应项
-                    translationsForRow.push(flatTranslations[flatIndex]); 
+                if (flatIndex < fullFlatTranslations.length) {
+                    translationsForRow.push(fullFlatTranslations[flatIndex]); 
                     flatIndex++;
                 } else {
-                    // 安全回退，不应该发生
                     translationsForRow.push(""); 
                 }
             }
             
-            // ⭐️ 必须返回 { translations: string[] } 对象，且对象数组长度必须与 paragraphsArray 相同 ⭐️
+            // 必须返回 { translations: string[] } 对象，且对象数组长度必须与 paragraphsArray 相同 
             return {
                 translations: translationsForRow 
             } as FinalResultItem;
         });
 
-        // 8. 校验最终结果 (check-result.ts 当前为空操作)
+        // 8. 校验和返回
         checkResultFromCustomWebpageTranslatSource({ result: finalResult }); 
         
         // 9. 返回最终的嵌套结果数组
-        // 官方文档要求返回 { result: FinalResultItem[] } 或 { code: string }
-        // 假设您的 WebpageTranslateFn 类型定义期望返回的是 result 数组本身
-        // 如果您的项目期望的是 { result: [] }，请自行添加包装
         return finalResult;
-        
-        /* 如果您的 WebpageTranslateFn 期望返回的是 { result: [] } 对象，
-        请使用以下代码代替 return finalResult; 这一行：
-        return { result: finalResult };
-        */
     }
     catch (err) {
         const error = err as ReturnType<typeof getError> | Error;
