@@ -1,12 +1,13 @@
-// 文件路径: ./src/public/web-page-translate/custom/translate.ts
+// 文件路径示例: ./src/public/web-page-translate/custom/translate.ts
 
 import { WebpageTranslateFn } from '..';
 import { SOURCE_ERROR } from '../../../constants/errorCodes';
 import scOptions from '../../sc-options';
 import { RESULT_ERROR, LANGUAGE_NOT_SOPPORTED } from '../../translate/error-codes';
-// 🚨 注意：这里保留了 fetchData 的导入，假设它来自 './translate/utils'
+// 假设 fetchData 和 getError 来自这个路径
 import { fetchData, getError } from '../../translate/utils'; 
 import { checkResultFromCustomWebpageTranslatSource } from './check-result';
+// 假设 langCode 位于这个路径
 import { langCode } from '../../translate/google/lang-code';
 
 
@@ -54,7 +55,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     let extractedParams = {}; 
 
     if (questionMarkIndex !== -1) {
-        baseUrl = urlString.substring(0, questionMarkIndex);
+        baseUrl = urlString.substring(0, questionMarkIndex); // 剥离参数后的 Base URL
         const paramsString = urlString.substring(questionMarkIndex + 1);
         
         paramsString.split('&').forEach(pair => {
@@ -70,10 +71,9 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     const authorizationToken = extractedParams['key'] || ''; 
     const rawTranslatorCode = extractedParams['tc'] || '0'; 
     const rawPromptBuilderCode = extractedParams['pbc'] || '0'; 
-    // 提取 org 参数
     const clientOrigin = extractedParams['org'] || navigator.language || 'zh-CN'; 
     
-    // 参数类型转换
+    // 参数类型转换 (解决 S000001 错误)
     const translatorCodeValue = parseInt(rawTranslatorCode.replace(/"/g, ''), 10) || 0; 
     const promptBuilderCodeValue = parseInt(rawPromptBuilderCode.replace(/"/g, ''), 10) || 0; 
     
@@ -82,14 +82,14 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
         : `Bearer ${authorizationToken}`;
     
     // 2. 语言代码和 Header 构造
-    const finalUrl = urlString; // 包含所有参数的完整 URL
+    const finalUrl = baseUrl; // 最终请求 URL 使用剥离参数后的 Base URL
 
     if (!(targetLanguage in langCode)) { throw getError(LANGUAGE_NOT_SOPPORTED); }
 
     const headers = {
         'Content-Type': 'application/json',
         'Authorization': authorizationHeaderValue,
-        // 增加 X-Client-Origin 头部
+        // 增加 X-Client-Origin 头部 (用于 API 业务逻辑识别，非 CORS 解决方案)
         "X-Client-Origin": clientOrigin,
         "accept": "*/*",
         "accept-language": navigator.language || "zh-CN",
@@ -102,6 +102,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     };
 
     // 3. 构造请求 Body
+    // 将 string[][] 扁平化并适配 API 期望的 texts: {id: string, content: string}[] 结构
     const textsForApi = paragraphs.flat().map((content, index) => ({
         id: `0-${index}`, 
         content: content || ''
@@ -115,7 +116,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     };
 
     // 4. 发送请求
-    const res = await fetchData(finalUrl, {
+    const res = await fetchData(finalUrl, { // 使用剥离参数后的 finalUrl
         method: 'POST',
         headers: headers,
         body: JSON.stringify(fetchJSON)
@@ -137,7 +138,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
              throw getError(RESULT_ERROR, 'API 响应中缺少 translatedTexts 字段。');
         }
 
-        // 6. 校验最终结果 (check-result.ts 假设已被禁用或正确实现)
+        // 6. 校验最终结果 - 封装 API 结果以满足校验函数的 { result: T[] } 要求
         checkResultFromCustomWebpageTranslatSource({ result: finalResultArray }); 
         
         // 7. 返回最终的翻译结果数组
