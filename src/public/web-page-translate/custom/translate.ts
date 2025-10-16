@@ -2,7 +2,6 @@
 
 import { WebpageTranslateFn } from '..';
 import { SOURCE_ERROR } from '../../../constants/errorCodes';
-// 假设 types 在 constants 目录下
 import * as types from '../../../constants/chromeSendMessageTypes'; 
 import scOptions from '../../sc-options';
 import { RESULT_ERROR, LANGUAGE_NOT_SOPPORTED } from '../../translate/error-codes';
@@ -25,12 +24,17 @@ type ApiRequestJSON = {
 type CustomApiResponse = {
     code: string;
     data?: {
-        translatedTexts?: any[]; 
-        texts?: any[];         // 匹配实际 API 响应
+        texts?: { id: string, translation: string }[]; // 匹配实际 API 响应
         sourceLanguage: string;
         targetLanguage: string;
     };
     message?: string;
+};
+
+// 官方要求的最终返回类型 (为了方便，我们直接构建 finalResult)
+type FinalResultItem = {
+    translations: string[]; 
+    comparisons?: string[];
 };
 
 type MockResponse = {
@@ -39,13 +43,8 @@ type MockResponse = {
     ok: boolean;
 };
 
-const getNormalizedLangCode = (apiCode: string, defaultValue: string = 'auto'): string => {
-    return (apiCode in langCode) ? apiCode : defaultValue; 
-};
+// ... (proxyFetchData 和其他辅助函数保持不变) ...
 
-/**
- * 通过 chrome.runtime.sendMessage 调用 Background Script 代理请求
- */
 const proxyFetchData = (url: string, options: any): Promise<MockResponse> => {
     return new Promise((resolve, reject) => {
         
@@ -135,17 +134,15 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     };
 
     // 3. 构造请求 Body
-    // 确保 paragraphs 是一个有效的数组
+    // ⭐️ 核心修正：paragraphs 是 string[][] 类型。我们现在使用 flat() 后的数组来构造 API 请求。
     const paragraphsArray = Array.isArray(paragraphs) ? paragraphs : [];
+    const flattenedParagraphs = paragraphsArray.flat(); // 获取扁平化后的原始文本列表
 
-    // ⭐️ 核心修正点：确保输入内容非空，防止 API 忽略导致数组长度不匹配 ⭐️
-    const textsForApi = paragraphsArray.flat().map((content, index) => {
+    const textsForApi = flattenedParagraphs.map((content, index) => {
         const cleanedContent = (content || '').trim();
-        
         return {
             id: `0-${index}`, 
-            // 如果清理后为空，使用一个最小的非空占位符（如 '.'），以确保 API 返回一个匹配的翻译结果
-            content: cleanedContent || '.' 
+            content: cleanedContent || '.' // 使用占位符保持长度
         };
     });
 
@@ -178,28 +175,59 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
         }
         
         const data = responseData.data;
-        // 使用 API 实际返回的字段名 'texts' 
         const rawResultArray = data.texts; 
         
         if (!rawResultArray) {
              throw getError(RESULT_ERROR, 'API 响应中缺少 texts 字段。');
         }
         
-        // 从 {id, translation}[] 数组中提取最终的翻译文本 string[]
-        const finalResultArray = rawResultArray.map(item => {
-            const translation = (item && item.translation) || '';
-            // 如果我们发送了占位符 '.'，则返回空字符串，而不是翻译后的 '.' 
-            // (这是可选的，取决于您是否想要返回翻译后的句号)
-            // 这里我们保持返回翻译后的结果，如果 API 翻译 '.' 为 '.'，则返回 '.' 
-            return translation; 
+        // 关键校验：检查 API 返回的扁平化数组长度是否与发送的扁平化数组长度一致
+        if (rawResultArray.length !== flattenedParagraphs.length) {
+            throw getError(RESULT_ERROR, `API 返回的翻译结果数 (${rawResultArray.length}) 与发送的段落数 (${flattenedParagraphs.length}) 不匹配。`);
+        }
+
+        // 7. 构造最终结果数组 (Final Result Array)
+        
+        // 1. 提取扁平化的翻译文本 (string[])
+        const flatTranslations = rawResultArray.map(item => (item && item.translation) || '');
+        
+        // 2. 将扁平化的翻译结果重构为原始的嵌套结构，
+        //    并将其包装成官方要求的 FinalResultItem 对象 { translations: [string] }
+        let flatIndex = 0;
+        const finalResult: FinalResultItem[] = paragraphsArray.map((row) => {
+            const translationsForRow: string[] = [];
+            
+            // row 是原始段落数组中的一行，它本身是一个 string[]
+            for (let i = 0; i < row.length; i++) {
+                if (flatIndex < flatTranslations.length) {
+                    // 从扁平化的翻译结果中取出对应项
+                    translationsForRow.push(flatTranslations[flatIndex]); 
+                    flatIndex++;
+                } else {
+                    // 安全回退，不应该发生
+                    translationsForRow.push(""); 
+                }
+            }
+            
+            // ⭐️ 必须返回 { translations: string[] } 对象，且对象数组长度必须与 paragraphsArray 相同 ⭐️
+            return {
+                translations: translationsForRow 
+            } as FinalResultItem;
         });
 
-
-        // 7. 校验最终结果 (check-result.ts 当前为空操作)
-        checkResultFromCustomWebpageTranslatSource({ result: finalResultArray }); 
+        // 8. 校验最终结果 (check-result.ts 当前为空操作)
+        checkResultFromCustomWebpageTranslatSource({ result: finalResult }); 
         
-        // 8. 返回最终的翻译结果数组
-        return finalResultArray; 
+        // 9. 返回最终的嵌套结果数组
+        // 官方文档要求返回 { result: FinalResultItem[] } 或 { code: string }
+        // 假设您的 WebpageTranslateFn 类型定义期望返回的是 result 数组本身
+        // 如果您的项目期望的是 { result: [] }，请自行添加包装
+        return finalResult;
+        
+        /* 如果您的 WebpageTranslateFn 期望返回的是 { result: [] } 对象，
+        请使用以下代码代替 return finalResult; 这一行：
+        return { result: finalResult };
+        */
     }
     catch (err) {
         const error = err as ReturnType<typeof getError> | Error;
