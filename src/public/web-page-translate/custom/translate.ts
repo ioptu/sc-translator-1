@@ -1,10 +1,12 @@
-// 文件路径: ./src/public/web-page-translate/custom/translate.ts
+// 文件路径示例: ./src/public/web-page-translate/custom/translate.ts
 
 import { WebpageTranslateFn } from '..';
 import { SOURCE_ERROR } from '../../../constants/errorCodes';
+// 假设 types 也在 constants 目录下
+import * as types from '../../../constants/chromeSendMessageTypes'; 
 import scOptions from '../../sc-options';
 import { RESULT_ERROR, LANGUAGE_NOT_SOPPORTED } from '../../translate/error-codes';
-// 假设 getError 仍在 utils 中，但 fetchData 将被 proxyFetchData 替代
+// 假设 getError 仍在 utils 中，我们不再需要 fetchData
 import { getError } from '../../translate/utils'; 
 import { checkResultFromCustomWebpageTranslatSource } from './check-result';
 import { langCode } from '../../translate/google/lang-code';
@@ -43,23 +45,26 @@ const getNormalizedLangCode = (apiCode: string, defaultValue: string = 'auto'): 
 };
 
 /**
- * 🚨 核心改动：通过 chrome.runtime.sendMessage 调用 Background Script 
+ * 🚨 核心改动：通过 chrome.runtime.sendMessage 调用 Background Script 代理请求
  */
 const proxyFetchData = (url: string, options: any): Promise<MockResponse> => {
     return new Promise((resolve, reject) => {
         
+        // 发送消息给后台 Service Worker
         chrome.runtime.sendMessage({
-            type: 'FETCH_CUSTOM_API_PROXY',
+            type: types.SCTS_CUSTOM_API_PROXY, // 使用新的消息类型
             payload: { url, options }
         }, (response) => {
+            // 检查 Chrome runtime 错误（如端口关闭）
             if (chrome.runtime.lastError) {
                 return reject(new Error('Extension messaging error: ' + chrome.runtime.lastError.message));
             }
+            // 检查后台脚本返回的自定义错误
             if (response.error) {
                 return reject(new Error(`Proxy Fetch Error: ${response.error}`));
             }
 
-            // 构造一个模拟 Response 对象，包含 json() 方法
+            // 构造一个模拟 Response 对象
             const mockResponse: MockResponse = {
                 ok: response.ok,
                 status: response.status,
@@ -82,7 +87,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
 
     if (!customTranslateSource) { throw getError(SOURCE_ERROR); }
 
-    // 1. URL 解析和自定义参数提取 (保持不变)
+    // 1. URL 解析和自定义参数提取
     const urlString = customTranslateSource.url;
     const questionMarkIndex = urlString.indexOf('?');
     
@@ -90,7 +95,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     let extractedParams = {}; 
 
     if (questionMarkIndex !== -1) {
-        baseUrl = urlString.substring(0, questionMarkIndex); 
+        baseUrl = urlString.substring(0, questionMarkIndex); // 剥离参数后的 Base URL
         const paramsString = urlString.substring(questionMarkIndex + 1);
         
         paramsString.split('&').forEach(pair => {
@@ -108,6 +113,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     const rawPromptBuilderCode = extractedParams['pbc'] || '0'; 
     const clientOrigin = extractedParams['org'] || navigator.language || 'zh-CN'; 
     
+    // 参数类型转换
     const translatorCodeValue = parseInt(rawTranslatorCode.replace(/"/g, ''), 10) || 0; 
     const promptBuilderCodeValue = parseInt(rawPromptBuilderCode.replace(/"/g, ''), 10) || 0; 
     
@@ -155,9 +161,15 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     });
 
     try {
+        // 5. 处理响应
+        if (!res.ok) {
+            // 如果 HTTP 状态码不是 2xx，抛出错误
+            throw new Error(`Proxy request failed with status: ${res.status}`);
+        }
+        
         const responseData: CustomApiResponse = await res.json();
 
-        // 5. 适配 API 响应解析
+        // 6. 适配 API 响应解析
         if (responseData.code !== 'S000000' || !responseData.data) {
             const errorMessage = responseData.message || 'API返回非成功状态码';
             throw getError(responseData.code || RESULT_ERROR, `网页翻译失败: ${errorMessage}`);
@@ -170,20 +182,21 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
              throw getError(RESULT_ERROR, 'API 响应中缺少 translatedTexts 字段。');
         }
 
-        // 6. 校验最终结果 (check-result.ts 假设已被禁用或正确实现)
+        // 7. 校验最终结果
         checkResultFromCustomWebpageTranslatSource({ result: finalResultArray }); 
         
-        // 7. 返回最终的翻译结果数组
+        // 8. 返回最终的翻译结果数组
         return finalResultArray; 
     }
     catch (err) {
-        const error = err as ReturnType<typeof getError>;
-        if (error.code) {
+        const error = err as ReturnType<typeof getError> | Error;
+        if ('code' in error && error.code) {
             throw error;
         }
         else {
             console.error("Unexpected translation error:", err);
-            throw getError(RESULT_ERROR);
+            // 如果是代理错误或 JSON 解析错误，将其封装成 RESULT_ERROR
+            throw getError(RESULT_ERROR, error.message || '未知翻译错误。');
         }
     }
 };
