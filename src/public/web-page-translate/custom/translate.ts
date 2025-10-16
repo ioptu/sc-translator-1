@@ -1,13 +1,17 @@
+// 文件路径: ./src/public/web-page-translate/custom/translate.ts
+
 import { WebpageTranslateFn } from '..';
 import { SOURCE_ERROR } from '../../../constants/errorCodes';
 import scOptions from '../../sc-options';
 import { RESULT_ERROR, LANGUAGE_NOT_SOPPORTED } from '../../translate/error-codes';
-import { fetchData, getError } from '../../translate/utils';
+// 🚨 注意：这里保留了 fetchData 的导入，假设它来自 './translate/utils'
+import { fetchData, getError } from '../../translate/utils'; 
 import { checkResultFromCustomWebpageTranslatSource } from './check-result';
 import { langCode } from '../../translate/google/lang-code';
 
+
 // ----------------------------------------------------------------------
-// 类型定义 (适配 API 期望的请求体结构)
+// 类型定义和辅助函数
 // ----------------------------------------------------------------------
 
 type ApiRequestJSON = {
@@ -27,12 +31,10 @@ type CustomApiResponse = {
     message?: string;
 };
 
-/**
- * 确保 API 返回的语言代码是 langCode 中存在的键。
- */
 const getNormalizedLangCode = (apiCode: string, defaultValue: string = 'auto'): string => {
     return (apiCode in langCode) ? apiCode : defaultValue; 
 };
+
 
 // ----------------------------------------------------------------------
 // 主函数
@@ -68,47 +70,52 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     const authorizationToken = extractedParams['key'] || ''; 
     const rawTranslatorCode = extractedParams['tc'] || '0'; 
     const rawPromptBuilderCode = extractedParams['pbc'] || '0'; 
+    // 提取 org 参数
+    const clientOrigin = extractedParams['org'] || navigator.language || 'zh-CN'; 
     
+    // 参数类型转换
     const translatorCodeValue = parseInt(rawTranslatorCode.replace(/"/g, ''), 10) || 0; 
     const promptBuilderCodeValue = parseInt(rawPromptBuilderCode.replace(/"/g, ''), 10) || 0; 
     
     const authorizationHeaderValue = authorizationToken.startsWith('Bearer ') 
         ? authorizationToken 
         : `Bearer ${authorizationToken}`;
-    // ===================================
     
     // 2. 语言代码和 Header 构造
+    const finalUrl = urlString; // 包含所有参数的完整 URL
+
     if (!(targetLanguage in langCode)) { throw getError(LANGUAGE_NOT_SOPPORTED); }
 
     const headers = {
         'Content-Type': 'application/json',
         'Authorization': authorizationHeaderValue,
+        // 增加 X-Client-Origin 头部
+        "X-Client-Origin": clientOrigin,
         "accept": "*/*",
         "accept-language": navigator.language || "zh-CN",
         "x-browser-language": navigator.language || "zh-CN",
         "priority": "u=1, i",
         "sec-fetch-dest": "empty",
-   //     "sec-fetch-mode": "cors",
+        "sec-fetch-mode": "cors",
         "sec-fetch-site": "none",
         "x-client-version": "1.6.7",
     };
 
-    // 3. 构造请求 Body (适配 API 结构)
-    // 将 string[][] 扁平化并适配 API 期望的 texts: {id: string, content: string}[] 结构
+    // 3. 构造请求 Body
     const textsForApi = paragraphs.flat().map((content, index) => ({
-        id: `0-${index}`, // 使用索引作为 ID
+        id: `0-${index}`, 
         content: content || ''
     }));
 
-    const fetchJSON: ApiRequestJSON = { // 使用新的类型 ApiRequestJSON
+    const fetchJSON: ApiRequestJSON = { 
         texts: textsForApi,
-        targetLanguage: langCode[targetLanguage], // 使用 API 期望的格式
+        targetLanguage: langCode[targetLanguage],
         translatorCode: translatorCodeValue,
         promptBuilderCode: promptBuilderCodeValue,
     };
 
     // 4. 发送请求
-    const res = await fetchData(baseUrl, {
+    const res = await fetchData(finalUrl, {
         method: 'POST',
         headers: headers,
         body: JSON.stringify(fetchJSON)
@@ -130,17 +137,19 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
              throw getError(RESULT_ERROR, 'API 响应中缺少 translatedTexts 字段。');
         }
 
-        // 6. 校验最终结果 - 封装 API 结果以满足 checkResultFromCustomWebpageTranslatSource 的要求
+        // 6. 校验最终结果 (check-result.ts 假设已被禁用或正确实现)
         checkResultFromCustomWebpageTranslatSource({ result: finalResultArray }); 
         
         // 7. 返回最终的翻译结果数组
         return finalResultArray; 
     }
     catch (err) {
-        if ((err as ReturnType<typeof getError>).code) {
-            throw err;
+        const error = err as ReturnType<typeof getError>;
+        if (error.code) {
+            throw error;
         }
         else {
+            console.error("Unexpected translation error:", err);
             throw getError(RESULT_ERROR);
         }
     }
