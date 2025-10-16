@@ -176,7 +176,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
         }
         
         const data = responseData.data;
-        const finalResultArray = data.translatedTexts;
+        const finalResultArray = data.texts;
 
         if (!finalResultArray) {
              throw getError(RESULT_ERROR, 'API 响应中缺少 translatedTexts 字段。');
