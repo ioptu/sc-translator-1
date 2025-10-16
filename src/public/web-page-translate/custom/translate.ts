@@ -88,7 +88,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
         "x-browser-language": navigator.language || "zh-CN",
         "priority": "u=1, i",
         "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
+   //     "sec-fetch-mode": "cors",
         "sec-fetch-site": "none",
         "x-client-version": "1.6.7",
     };
