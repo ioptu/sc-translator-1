@@ -52,6 +52,7 @@ const proxyFetchData = (url: string, options: any): Promise<MockResponse> => {
             payload: { url, options }
         }, (response) => {
             if (chrome.runtime.lastError) {
+                // 处理消息端口关闭等问题
                 return reject(new Error('Extension messaging error: ' + chrome.runtime.lastError.message));
             }
             if (response.error) {
@@ -147,7 +148,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
         const isPurePunctuationOrShort = cleanedContent.length > 0 && !/[a-zA-Z\u4e00-\u9fa5]/.test(cleanedContent) && cleanedContent.length < 3;
 
         if (cleanedContent.length === 0 || isPurePunctuationOrShort) {
-            // 跳过发送给 API，在后续步骤中该索引将自动填充空字符串
+            // 跳过发送给 API
         } else {
             // 有效内容，添加到请求中
             textsForApi.push({
@@ -215,8 +216,8 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
                 fullFlatTranslations[originalIndex] = flatApiTranslations[apiIndex];
                 apiIndex++;
             } else {
-                // 无效内容（如 ":"），保持为空字符串
-                fullFlatTranslations[originalIndex] = ''; 
+                // ⭐️ 修正点：无效内容（如 ":"），填充其原始内容，以确保它不会消失 ⭐️
+                fullFlatTranslations[originalIndex] = flattenedParagraphs[originalIndex] || ''; 
             }
         }
 
