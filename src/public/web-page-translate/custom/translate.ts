@@ -25,7 +25,7 @@ type ApiRequestJSON = {
 type CustomApiResponse = {
     code: string;
     data?: {
-        translatedTexts?: any[]; // 保留兼容性，但实际使用 texts
+        translatedTexts?: any[]; 
         texts?: any[];         // 匹配实际 API 响应
         sourceLanguage: string;
         targetLanguage: string;
@@ -44,7 +44,7 @@ const getNormalizedLangCode = (apiCode: string, defaultValue: string = 'auto'): 
 };
 
 /**
- * 🚨 核心改动：通过 chrome.runtime.sendMessage 调用 Background Script 代理请求
+ * 通过 chrome.runtime.sendMessage 调用 Background Script 代理请求
  */
 const proxyFetchData = (url: string, options: any): Promise<MockResponse> => {
     return new Promise((resolve, reject) => {
@@ -135,13 +135,19 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
     };
 
     // 3. 构造请求 Body
-    // ⭐️ 修正点 1：确保 paragraphs 是一个有效的数组，以防止 .flat() 崩溃 ⭐️
+    // 确保 paragraphs 是一个有效的数组
     const paragraphsArray = Array.isArray(paragraphs) ? paragraphs : [];
 
-    const textsForApi = paragraphsArray.flat().map((content, index) => ({
-        id: `0-${index}`, 
-        content: content || ''
-    }));
+    // ⭐️ 核心修正点：确保输入内容非空，防止 API 忽略导致数组长度不匹配 ⭐️
+    const textsForApi = paragraphsArray.flat().map((content, index) => {
+        const cleanedContent = (content || '').trim();
+        
+        return {
+            id: `0-${index}`, 
+            // 如果清理后为空，使用一个最小的非空占位符（如 '.'），以确保 API 返回一个匹配的翻译结果
+            content: cleanedContent || '.' 
+        };
+    });
 
     const fetchJSON: ApiRequestJSON = { 
         texts: textsForApi,
@@ -150,7 +156,7 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
         promptBuilderCode: promptBuilderCodeValue,
     };
 
-    // 4. 发送请求 - 🚨 使用代理函数
+    // 4. 发送请求 - 使用代理函数
     const res = await proxyFetchData(finalUrl, {
         method: 'POST',
         headers: headers,
@@ -172,18 +178,24 @@ export const translate: WebpageTranslateFn = async ({ paragraphs, targetLanguage
         }
         
         const data = responseData.data;
-        // ⭐️ 修正点 2：使用 API 实际返回的字段名 'texts' ⭐️
+        // 使用 API 实际返回的字段名 'texts' 
         const rawResultArray = data.texts; 
         
         if (!rawResultArray) {
              throw getError(RESULT_ERROR, 'API 响应中缺少 texts 字段。');
         }
         
-        // ⭐️ 修正点 3：从 {id, translation}[] 数组中提取最终的翻译文本 string[] ⭐️
-        const finalResultArray = rawResultArray.map(item => (item && item.translation) || '');
+        // 从 {id, translation}[] 数组中提取最终的翻译文本 string[]
+        const finalResultArray = rawResultArray.map(item => {
+            const translation = (item && item.translation) || '';
+            // 如果我们发送了占位符 '.'，则返回空字符串，而不是翻译后的 '.' 
+            // (这是可选的，取决于您是否想要返回翻译后的句号)
+            // 这里我们保持返回翻译后的结果，如果 API 翻译 '.' 为 '.'，则返回 '.' 
+            return translation; 
+        });
 
 
-        // 7. 校验最终结果
+        // 7. 校验最终结果 (check-result.ts 当前为空操作)
         checkResultFromCustomWebpageTranslatSource({ result: finalResultArray }); 
         
         // 8. 返回最终的翻译结果数组
