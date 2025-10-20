@@ -153,7 +153,7 @@ export const translate = async ({ text, from, to, preferredLanguage, secondPrefe
         }
         
         // 7. 构造最终结果，确保符合 TranslateResult 结构，以通过外部校验
-        const translatedText = data.texts[0]?.translation; // 提取翻译结果
+        translatedText = data.texts[0]?.translation; // 提取翻译结果
 
         // 校验：如果必需数据不存在，提前抛出错误，避免返回不完整对象
         if (!translatedText || !data.sourceLanguage) {
