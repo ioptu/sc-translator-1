@@ -126,7 +126,7 @@ export const translate = async ({ text, from, to, preferredLanguage, secondPrefe
         // 6. 自动切换目标语言 (二次请求逻辑)
         const sourceLangFromApi = data.sourceLanguage;
         const targetLangFromApi = data.targetLanguage;
-        const translatedText = data.texts[0]?.translation || '';
+        let translatedText = data.texts[0]?.translation || '';
         // 检查是否用户未指定语言 且 自动检测结果与目标语言相同
         if (!originFrom && !originTo && (sourceLangFromApi === targetLangFromApi || (sourceLangFromApi === 'auto' && translatedText === text)) && preferredLanguage !== secondPreferredLanguage) {
             to = secondPreferredLanguage;
